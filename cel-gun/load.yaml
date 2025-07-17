@@ -1,0 +1,27 @@
+# this load file == 5 libp2p hosts shooting at the same time at a rate of 1 rps
+# -> 10 rps over the span of 1 min; at the end, there are 50 rps from 5 hosts
+# being spammed at BN
+pools:
+  - id: libp2p pool
+    gun:
+      type: nd_gun
+      parallel: 1
+    ammo:
+      type: custom_provider
+      source:
+        type: file
+        path: ./ammo.txt
+    result:
+      type: jsonlines
+      sink:
+        type: file
+        path: ./result.txt
+      buffer-size: 1048576
+      flush-interval: 1s
+      sample-queue-size: 131072
+      marshal-float-with-6-digits: false
+      sort-map-keys: false
+    rps: { duration: 2m, type: line, from: 1, to: 10 }
+    startup:
+      type: once
+      times: 1
