@@ -6,6 +6,7 @@ pools:
     gun:
       type: nd_gun
       parallel: 1
+      message_type: "namespace_data"  # specify which message type to use
     ammo:
       type: custom_provider
       source:

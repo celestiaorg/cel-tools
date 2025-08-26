@@ -22,14 +22,14 @@ echo "Build successful!"
 # Set environment variables from command line arguments
 export GUN_NETWORK="$1"
 export GUN_TARGET="$2"
-export GUN_NAMESPACE="$3"
-export GUN_HEIGHT="$4"
+export GUN_MESSAGE_TYPE="$3"
+export GUN_FILEPATH="$4"
 
 echo "Environment variables set:"
 echo "  GUN_NETWORK=$GUN_NETWORK"
 echo "  GUN_TARGET=$GUN_TARGET"
-echo "  GUN_NAMESPACE=$GUN_NAMESPACE"
-echo "  GUN_HEIGHT=$GUN_HEIGHT"
+echo "  GUN_MESSAGE_TYPE=$GUN_MESSAGE_TYPE"
+echo "  GUN_FILEPATH=$GUN_FILEPATH"
 
 # Run the executable
 echo "Running cel-gun..."
