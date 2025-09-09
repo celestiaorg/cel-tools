@@ -208,7 +208,7 @@ func main() {
 	// Custom imports. Integrate your custom types into configuration system.
 	coreimport.RegisterCustomJSONProvider("custom_provider", func() core.Ammo { return &Ammo{} })
 
-	register.Gun("nd_gun", NewGun, func() GunConfig {
+	register.Gun("cel_gun", NewGun, func() GunConfig {
 		addr, err := multiaddr.NewMultiaddr(targetMultiAddr)
 		if err != nil {
 			panic(err)

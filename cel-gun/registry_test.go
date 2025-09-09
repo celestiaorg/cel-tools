@@ -12,7 +12,7 @@ import (
 )
 
 func TestRegistry_HeaderRange(t *testing.T) {
-	jsonData, err := os.ReadFile("headerreq.json")
+	jsonData, err := os.ReadFile("header_req.json")
 	require.NoError(t, err)
 
 	msg, err := LoadMessageFromJSON("header_range_request", jsonData)
@@ -37,7 +37,7 @@ func TestRegistry_HeaderRange(t *testing.T) {
 }
 
 func TestRegistry_NamespaceData(t *testing.T) {
-	jsonData, err := os.ReadFile("example_message.json")
+	jsonData, err := os.ReadFile("nd_req.json")
 	require.NoError(t, err)
 
 	msg, err := LoadMessageFromJSON("namespace_data_request", jsonData)
