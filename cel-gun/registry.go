@@ -161,11 +161,11 @@ type NamespaceDataMessage struct {
 }
 
 func (n *NamespaceDataMessage) ProtocolString(network string) string {
-	return network + shrex.ProtocolString + shwap.NamespaceDataName
+	return string(shrex.ProtocolID(network, n.request.Name()))
 }
 
 func (n *NamespaceDataMessage) StartHeight() uint64 {
-	return n.request.Height
+	return n.request.Height()
 }
 
 func (n *NamespaceDataMessage) UnmarshalRequest(data []byte) error {
@@ -207,6 +207,64 @@ func (n *NamespaceDataMessage) GetResponseSize() uint64 {
 	return uint64(len(n.responseData.Flatten())) * 512
 }
 
+type SampleMessage struct {
+	request *shwap.SampleID
+
+	responseData *shwap.Sample
+}
+
+func (n *SampleMessage) ProtocolString(network string) string {
+	return string(shrex.ProtocolID(network, n.request.Name()))
+}
+
+func (n *SampleMessage) StartHeight() uint64 {
+	return n.request.Height()
+}
+
+func (n *SampleMessage) UnmarshalRequest(data []byte) error {
+	sampleId := new(shwap.SampleID)
+	err := json.Unmarshal(data, sampleId)
+	if err != nil {
+		return err
+	}
+
+	n.request = sampleId
+	return nil
+}
+
+func (n *SampleMessage) MarshalRequest() ([]byte, error) {
+	return n.request.MarshalBinary()
+}
+
+func (n *SampleMessage) ReadResponse(stream network.Stream) error {
+	var resp shrexpb.Response
+	_, err := serde.Read(stream, &resp)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	sample := new(shwap.Sample)
+	_, err = sample.ReadFrom(stream)
+	if err != nil {
+		return fmt.Errorf("failed to read namespace data: %w", err)
+	}
+
+	n.responseData = sample
+	return nil
+}
+
+func (n *SampleMessage) GetResponseSize() uint64 {
+	if n.responseData == nil {
+		return 0
+	}
+	jsonData, err := n.responseData.MarshalJSON()
+	if err != nil {
+		panic(err)
+	}
+
+	return uint64(len(jsonData))
+}
+
 // init registers all built-in message types
 func init() {
 	RegisterMessage("namespace_data_request", func() Message {
@@ -215,4 +273,6 @@ func init() {
 	RegisterMessage("header_range_request", func() Message {
 		return &HeaderRangeMessage{}
 	})
+
+	RegisterMessage("sample_request", func() Message { return &SampleMessage{} })
 }
