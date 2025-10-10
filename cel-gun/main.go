@@ -2,33 +2,26 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/libp2p/go-libp2p/core/network"
-	"github.com/yandex/pandora/cli"
-	"go.uber.org/zap"
 	"math/rand"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/celestiaorg/celestia-node/share/shwap"
-	"github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex"
-	shrexpb "github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex/pb"
-	"github.com/celestiaorg/go-libp2p-messenger/serde"
-	libshare "github.com/celestiaorg/go-square/v2/share"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/afero"
+	"github.com/yandex/pandora/cli"
 	"github.com/yandex/pandora/core"
 	coreimport "github.com/yandex/pandora/core/import"
 	"github.com/yandex/pandora/core/register"
+	"go.uber.org/zap"
 )
 
 type Gun struct {
@@ -44,11 +37,10 @@ type Gun struct {
 }
 
 type GunConfig struct {
-	ProtocolID  protocol.ID
-	Target      multiaddr.Multiaddr
-	Namespace   libshare.Namespace
-	StartHeight uint64
-	Parallel    int
+	ProtocolID protocol.ID
+	Target     multiaddr.Multiaddr
+	Message    Message
+	Parallel   int
 }
 
 func NewGun(conf GunConfig) *Gun {
@@ -98,9 +90,6 @@ func (g *Gun) Shoot(ammo core.Ammo) {
 	g.shoot(context.Background(), customAmmo, g.hosts[randIdx])
 
 	fmt.Println("-------------------------------------------------SHOT ROUND-------------------------------------------------")
-	fmt.Println("-------------------------------------------------decrementing height...-------------------------------------------------")
-
-	g.conf.StartHeight--
 }
 
 func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
@@ -111,19 +100,12 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 				Fail:    true,
 				HostPID: h.ID().String(),
 			})
-			fmt.Println("Failed to get namespace data from host: ", h.ID().String(), " with error: ", err.Error())
+			fmt.Println("Failed to get response from host: ", h.ID().String(), " with error: ", err.Error())
 			return
 		}
 	}()
 
-	ndReq := shwap.NamespaceDataID{
-		EdsID: shwap.EdsID{
-			Height: g.conf.StartHeight,
-		},
-		DataNamespace: g.conf.Namespace,
-	}
-
-	bin, err := ndReq.MarshalBinary()
+	bin, err := g.conf.Message.MarshalRequest()
 	if err != nil {
 		panic(err)
 	}
@@ -159,30 +141,19 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 
 	startTime := time.Now()
 
-	var resp shrexpb.Response
-	_, err = serde.Read(stream, &resp)
+	err = g.conf.Message.ReadResponse(stream)
 	if err != nil {
 		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
 			stream = nil
 		}
-		fmt.Println("ERR reading shrexpb resp status from stream : ", err.Error())
-		return
-	}
-
-	nd := new(shwap.NamespaceData)
-	_, err = nd.ReadFrom(stream)
-	if err != nil {
-		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
-			stream = nil
-		}
-		fmt.Println("ERR reading nd from stream: ", err.Error())
+		fmt.Println("ERR reading message from stream: ", err.Error())
 		return
 	}
 	stream.CloseRead()
 
 	endTime := time.Since(startTime)
 	latencyMilliseconds := float64(endTime.Milliseconds())
-	responseBytes := int64(len(nd.Flatten())) * 512
+	responseBytes := g.conf.Message.GetResponseSize()
 
 	speed := float64(responseBytes) / latencyMilliseconds // bytes per ms
 
@@ -194,14 +165,14 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 		HostPID:           h.ID().String(),
 	})
 
-	fmt.Println("Successfully got namespace data response:  ", responseBytes, "      in ", latencyMilliseconds, " ms    from host:   ", h.ID().String())
+	fmt.Println("Successfully got a response:  ", responseBytes, "      in ", latencyMilliseconds, " ms    from host:   ", h.ID().String())
 }
 
 type Ammo struct{}
 
 type Report struct {
 	Fail              bool    `json:"fail"`
-	PayloadSize       int64   `json:"payload_size"`
+	PayloadSize       uint64  `json:"payload_size"`
 	TotalDownloadTime float64 `json:"total_download_time_ms"`
 	DownloadSpeed     float64 `json:"download_speed"` // bytes per second
 	HostPID           string  `json:"host_pid"`
@@ -210,15 +181,25 @@ type Report struct {
 func main() {
 	networkID := os.Getenv("GUN_NETWORK")
 	targetMultiAddr := os.Getenv("GUN_TARGET")
-	targetNS := os.Getenv("GUN_NAMESPACE")
-	height := os.Getenv("GUN_HEIGHT")
+	messageType := os.Getenv("GUN_MESSAGE_TYPE")
+	filePath := os.Getenv("GUN_FILEPATH")
 
-	protocolID := networkID + shrex.ProtocolString + shwap.NamespaceDataName
-	ns := parseNS(targetNS)
-	startHeight, err := strconv.ParseUint(height, 10, 64)
-	if err != nil {
-		panic(err)
+	if networkID == "" || targetMultiAddr == "" || messageType == "" || filePath == "" {
+		panic("make sure to provide all the necessary env variables: " +
+			"GUN_NETWORK, GUN_TARGET, GUN_MESSAGE_TYPE, GUN_FILEPATH")
 	}
+
+	jsonData, err := os.ReadFile(filePath)
+	if err != nil {
+		panic(fmt.Errorf("failed to read file %s: %w", filePath, err))
+	}
+
+	message, err := LoadMessageFromJSON(messageType, jsonData)
+	if err != nil {
+		panic(fmt.Errorf("failed to load message: %w", err))
+	}
+
+	protocolID := message.ProtocolString(networkID)
 
 	// Standard imports
 	fs := afero.NewOsFs()
@@ -227,17 +208,16 @@ func main() {
 	// Custom imports. Integrate your custom types into configuration system.
 	coreimport.RegisterCustomJSONProvider("custom_provider", func() core.Ammo { return &Ammo{} })
 
-	register.Gun("nd_gun", NewGun, func() GunConfig {
+	register.Gun("cel_gun", NewGun, func() GunConfig {
 		addr, err := multiaddr.NewMultiaddr(targetMultiAddr)
 		if err != nil {
 			panic(err)
 		}
 
 		return GunConfig{
-			ProtocolID:  protocol.ID(protocolID),
-			Target:      addr,
-			Namespace:   ns,
-			StartHeight: startHeight,
+			ProtocolID: protocol.ID(protocolID),
+			Target:     addr,
+			Message:    message,
 		}
 	})
 
@@ -251,16 +231,4 @@ func main() {
 		panic(err)
 	}
 	zap.ReplaceGlobals(logger)
-}
-
-func parseNS(unparsed string) libshare.Namespace {
-	decodedNS, err := hex.DecodeString(unparsed)
-	if err != nil {
-		panic(err)
-	}
-	ns, err := libshare.NewNamespace(0, decodedNS)
-	if err != nil {
-		panic(err)
-	}
-	return ns
 }
