@@ -36,10 +36,20 @@ type Gun struct {
 	target peer.ID
 }
 
+// MutationRate defines how often to mutate the message
+type MutationRate int
+
+// TODO @renaynay: eventually add more mutation strategies here
+const (
+	None MutationRate = iota
+	PerShot
+)
+
 type GunConfig struct {
 	ProtocolID protocol.ID
 	Target     multiaddr.Multiaddr
 	Message    Message
+	MutRate    MutationRate
 	Parallel   int
 }
 
@@ -90,6 +100,20 @@ func (g *Gun) Shoot(ammo core.Ammo) {
 	g.shoot(context.Background(), customAmmo, g.hosts[randIdx])
 
 	fmt.Println("-------------------------------------------------SHOT ROUND-------------------------------------------------")
+
+	if g.conf.MutRate == PerShot {
+		mm, ok := g.conf.Message.(MutableMessage)
+		if !ok {
+			panic("message is not mutable but mutation rate is set")
+		}
+		err := mm.Mutate()
+		if err != nil {
+			panic("failed to mutate message: " + err.Error())
+		}
+
+		g.conf.Message = mm
+		fmt.Println("-------MUTATED MESSAGE: new height: ", g.conf.Message.StartHeight(), "--------------")
+	}
 }
 
 func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
@@ -214,10 +238,16 @@ func main() {
 			panic(err)
 		}
 
+		var mutRate MutationRate
+		if mm, ok := message.(MutableMessage); ok {
+			mutRate = mm.Rate()
+		}
+
 		return GunConfig{
 			ProtocolID: protocol.ID(protocolID),
 			Target:     addr,
 			Message:    message,
+			MutRate:    mutRate,
 		}
 	})
 
