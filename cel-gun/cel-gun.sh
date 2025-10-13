@@ -3,7 +3,7 @@
 # Check if the correct number of arguments were provided
 if [ $# -ne 4 ]; then
     echo "Usage: $0 <GUN_NETWORK> <GUN_TARGET> <GUN_MESSAGE_TYPE> <GUN_FILEPATH>"
-    echo "Example: $0 mocha /ip4/1.2.3.4/tcp/2121/p2p/12D3K... deadbeef 12345"
+    echo "Example: $0 mocha-4 /ip4/1.2.3.4/tcp/2121/p2p/12D3K... deadbeef 12345"
     exit 1
 fi
 

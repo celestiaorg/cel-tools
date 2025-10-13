@@ -7,7 +7,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"io"
 
-	p2p_pb "github.com/celestiaorg/go-header/p2p/pb"
+	p2ppb "github.com/celestiaorg/go-header/p2p/pb"
 	"github.com/libp2p/go-libp2p/core/protocol"
 
 	"github.com/celestiaorg/celestia-node/header"
@@ -32,6 +32,14 @@ type Message interface {
 	ReadResponse(stream network.Stream) error
 	// GetResponseSize returns the size of the response for metrics
 	GetResponseSize() uint64
+}
+
+// MutableMessage extends Message with mutation capabilities
+type MutableMessage interface {
+	Message
+
+	Mutate() error
+	Rate() MutationRate
 }
 
 // MessageFactory is a function that creates a new instance of a message type
@@ -70,7 +78,7 @@ func LoadMessageFromJSON(messageType string, jsonData []byte) (Message, error) {
 }
 
 type HeaderRangeMessage struct {
-	request  *p2p_pb.HeaderRequest
+	request  *p2ppb.HeaderRequest
 	response []*header.ExtendedHeader
 	respSize uint64
 }
@@ -94,26 +102,28 @@ func (h *HeaderRangeMessage) UnmarshalRequest(data []byte) error {
 		return err
 	}
 
-	h.request = &p2p_pb.HeaderRequest{
-		Data:   &p2p_pb.HeaderRequest_Origin{Origin: req.Origin},
+	h.request = &p2ppb.HeaderRequest{
+		Data:   &p2ppb.HeaderRequest_Origin{Origin: req.Origin},
 		Amount: req.Amount,
 	}
 	return nil
 }
 
 func (h *HeaderRangeMessage) MarshalRequest() ([]byte, error) {
-	return h.request.Marshal()
+	buf := make([]byte, h.request.Size()+h.request.Size())
+	_, err := serde.Marshal(h.request, buf)
+	return buf, err
 }
 
 func (h *HeaderRangeMessage) ReadResponse(stream network.Stream) error {
 	var (
-		headers = make([]*p2p_pb.HeaderResponse, 0)
+		headers = make([]*p2ppb.HeaderResponse, 0)
 		err     error
 	)
 
 	var totalRespLn int
 	for i := uint64(0); i < h.request.Amount; i++ {
-		resp := new(p2p_pb.HeaderResponse)
+		resp := new(p2ppb.HeaderResponse)
 		respLn, readErr := serde.Read(stream, resp)
 		if readErr != nil {
 			err = readErr
@@ -153,6 +163,43 @@ func (h *HeaderRangeMessage) GetResponseSize() uint64 {
 	return h.respSize
 }
 
+// Mutate will decrement the header range request
+func (h *HeaderRangeMessage) Mutate() error {
+	origin := h.request.GetOrigin()
+	amount := h.request.GetAmount()
+
+	if origin <= 1 {
+		// we've reached the end, cannot mutate further
+		return fmt.Errorf("mutate: header range fully requested")
+	}
+
+	var (
+		newAmount uint64
+		newOrigin uint64
+	)
+
+	// Calculate the new origin by moving back by 'amount'
+	if origin <= amount {
+		// We're close to genesis, so we can't move back a full 'amount'
+		// Request from genesis (1) up to just before the current origin
+		newOrigin = 1
+		newAmount = origin - 1
+	} else {
+		// Move back by 'amount'
+		newOrigin = origin - amount
+		newAmount = amount
+	}
+
+	h.request = &p2ppb.HeaderRequest{
+		Data:   &p2ppb.HeaderRequest_Origin{Origin: newOrigin},
+		Amount: newAmount,
+	}
+
+	return nil
+}
+
+func (h *HeaderRangeMessage) Rate() MutationRate { return PerShot }
+
 // NamespaceDataMessage implements the Message interface for namespace data requests
 type NamespaceDataMessage struct {
 	request *shwap.NamespaceDataID
@@ -161,11 +208,11 @@ type NamespaceDataMessage struct {
 }
 
 func (n *NamespaceDataMessage) ProtocolString(network string) string {
-	return network + shrex.ProtocolString + shwap.NamespaceDataName
+	return string(shrex.ProtocolID(network, n.request.Name()))
 }
 
 func (n *NamespaceDataMessage) StartHeight() uint64 {
-	return n.request.Height
+	return n.request.Height()
 }
 
 func (n *NamespaceDataMessage) UnmarshalRequest(data []byte) error {
