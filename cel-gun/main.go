@@ -22,6 +22,8 @@ import (
 	coreimport "github.com/yandex/pandora/core/import"
 	"github.com/yandex/pandora/core/register"
 	"go.uber.org/zap"
+
+	"github.com/renaynay/cel-gun/cel-gun/registry"
 )
 
 type Gun struct {
@@ -36,20 +38,11 @@ type Gun struct {
 	target peer.ID
 }
 
-// MutationRate defines how often to mutate the message
-type MutationRate int
-
-// TODO @renaynay: eventually add more mutation strategies here
-const (
-	None MutationRate = iota
-	PerShot
-)
-
 type GunConfig struct {
 	ProtocolID protocol.ID
 	Target     multiaddr.Multiaddr
-	Message    Message
-	MutRate    MutationRate
+	Message    registry.Message
+	MutRate    registry.MutationRate
 	Parallel   int
 }
 
@@ -101,8 +94,8 @@ func (g *Gun) Shoot(ammo core.Ammo) {
 
 	fmt.Println("-------------------------------------------------SHOT ROUND-------------------------------------------------")
 
-	if g.conf.MutRate == PerShot {
-		mm, ok := g.conf.Message.(MutableMessage)
+	if g.conf.MutRate == registry.PerShot {
+		mm, ok := g.conf.Message.(registry.MutableMessage)
 		if !ok {
 			panic("message is not mutable but mutation rate is set")
 		}
@@ -129,11 +122,6 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 		}
 	}()
 
-	bin, err := g.conf.Message.MarshalRequest()
-	if err != nil {
-		panic(err)
-	}
-
 	fmt.Println("Shooting from host:   ", h.ID().String())
 
 	stream, err := h.NewStream(ctx, g.target, g.conf.ProtocolID)
@@ -149,7 +137,7 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 		fmt.Println("set read deadline err: ", err.Error())
 	}
 
-	_, err = stream.Write(bin)
+	_, err = g.conf.Message.WriteTo(stream)
 	if err != nil {
 		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
 			stream = nil
@@ -165,7 +153,7 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 
 	startTime := time.Now()
 
-	err = g.conf.Message.ReadResponse(stream)
+	_, err = g.conf.Message.ReadFrom(stream)
 	if err != nil {
 		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
 			stream = nil
@@ -218,7 +206,7 @@ func main() {
 		panic(fmt.Errorf("failed to read file %s: %w", filePath, err))
 	}
 
-	message, err := LoadMessageFromJSON(messageType, jsonData)
+	message, err := registry.LoadMessageFromJSON(messageType, jsonData)
 	if err != nil {
 		panic(fmt.Errorf("failed to load message: %w", err))
 	}
@@ -238,8 +226,8 @@ func main() {
 			panic(err)
 		}
 
-		var mutRate MutationRate
-		if mm, ok := message.(MutableMessage); ok {
+		var mutRate registry.MutationRate
+		if mm, ok := message.(registry.MutableMessage); ok {
 			mutRate = mm.Rate()
 		}
 

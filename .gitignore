@@ -32,5 +32,4 @@ go.work.sum
 .vscode/
 
 # Project-specific files
-cel-gun
 result.txt
