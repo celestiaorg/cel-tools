@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -132,52 +131,19 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 		panic(err)
 	}
 
-	err = stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	if err != nil {
-		fmt.Println("set read deadline err: ", err.Error())
-	}
-
-	_, err = g.conf.Message.WriteTo(stream)
-	if err != nil {
-		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
-			stream = nil
-		}
+	if err = Send(ctx, stream, g.conf.Message.Handler()); err != nil {
 		return
 	}
-	stream.CloseWrite()
-
-	err = stream.SetReadDeadline(time.Now().Add(time.Minute))
-	if err != nil {
-		fmt.Println("set read deadline err: ", err.Error())
-	}
-
-	startTime := time.Now()
-
-	_, err = g.conf.Message.ReadFrom(stream)
-	if err != nil {
-		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
-			stream = nil
-		}
-		fmt.Println("ERR reading message from stream: ", err.Error())
-		return
-	}
-	stream.CloseRead()
-
-	endTime := time.Since(startTime)
-	latencyMilliseconds := float64(endTime.Milliseconds())
-	responseBytes := g.conf.Message.GetResponseSize()
-
-	speed := float64(responseBytes) / latencyMilliseconds // bytes per ms
 
 	g.aggr.Report(Report{
 		Fail:              false,
-		PayloadSize:       responseBytes,
-		TotalDownloadTime: latencyMilliseconds,
-		DownloadSpeed:     speed,
+		PayloadSize:       uint64(g.conf.Message.TotalBytes()),
+		TotalDownloadTime: g.conf.Message.Latency(),
+		DownloadSpeed:     g.conf.Message.Speed(),
 		HostPID:           h.ID().String(),
 	})
 
-	fmt.Println("Successfully got a response:  ", responseBytes, "      in ", latencyMilliseconds, " ms    from host:   ", h.ID().String())
+	fmt.Println("Successfully got a response:  ", g.conf.Message.TotalBytes(), "      in ", g.conf.Message.Latency(), " ms    from host:   ", h.ID().String())
 }
 
 type Ammo struct{}
@@ -249,4 +215,16 @@ func main() {
 		panic(err)
 	}
 	zap.ReplaceGlobals(logger)
+}
+
+func Send(ctx context.Context, stream network.Stream, handler registry.MessageHandler) error {
+	err := handler(ctx, stream)
+	if err != nil {
+		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
+			stream = nil
+		}
+
+		fmt.Println("Failed to handle message: ", err.Error())
+	}
+	return err
 }

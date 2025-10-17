@@ -1,8 +1,9 @@
 package registry
 
 import (
+	"context"
 	"fmt"
-	"io"
+	"github.com/libp2p/go-libp2p/core/network"
 )
 
 // init registers all built-in message types
@@ -28,9 +29,12 @@ type Message interface {
 	// GetResponseSize returns the size of the response for metrics
 	GetResponseSize() uint64
 
-	io.ReaderFrom
-	io.WriterTo
+	Handler() MessageHandler
+
+	MetricProvider
 }
+
+type MessageHandler func(context.Context, network.Stream) error
 
 // MutationRate defines how often to mutate the message
 type MutationRate int
