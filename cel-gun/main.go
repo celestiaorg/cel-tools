@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -131,19 +132,20 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 		panic(err)
 	}
 
-	if err = Send(ctx, stream, g.conf.Message.Handler()); err != nil {
+	totalBytes, latency, err := Send(ctx, stream, g.conf.Message.Handler())
+	if err != nil {
 		return
 	}
 
 	g.aggr.Report(Report{
 		Fail:              false,
-		PayloadSize:       uint64(g.conf.Message.TotalBytes()),
-		TotalDownloadTime: g.conf.Message.Latency(),
-		DownloadSpeed:     g.conf.Message.Speed(),
+		PayloadSize:       uint64(totalBytes),
+		TotalDownloadTime: latency,
+		DownloadSpeed:     float64(totalBytes) / latency,
 		HostPID:           h.ID().String(),
 	})
 
-	fmt.Println("Successfully got a response:  ", g.conf.Message.TotalBytes(), "      in ", g.conf.Message.Latency(), " ms    from host:   ", h.ID().String())
+	fmt.Println("Successfully got a response:  ", totalBytes, "      in ", latency, " ms    from host:   ", h.ID().String())
 }
 
 type Ammo struct{}
@@ -167,6 +169,15 @@ func main() {
 			"GUN_NETWORK, GUN_TARGET, GUN_MESSAGE_TYPE, GUN_FILEPATH")
 	}
 
+	addr, err := multiaddr.NewMultiaddr(targetMultiAddr)
+	if err != nil {
+		panic(err)
+	}
+	id, err := peer.AddrInfoFromP2pAddr(addr)
+	if err != nil {
+		panic(err)
+	}
+
 	jsonData, err := os.ReadFile(filePath)
 	if err != nil {
 		panic(fmt.Errorf("failed to read file %s: %w", filePath, err))
@@ -179,6 +190,13 @@ func main() {
 
 	protocolID := message.ProtocolString(networkID)
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	err = message.Preload(ctx, networkID, id.ID)
+	if err != nil {
+		panic(fmt.Errorf("failed to preload message: %w", err))
+	}
 	// Standard imports
 	fs := afero.NewOsFs()
 	coreimport.Import(fs)
@@ -187,11 +205,6 @@ func main() {
 	coreimport.RegisterCustomJSONProvider("custom_provider", func() core.Ammo { return &Ammo{} })
 
 	register.Gun("cel_gun", NewGun, func() GunConfig {
-		addr, err := multiaddr.NewMultiaddr(targetMultiAddr)
-		if err != nil {
-			panic(err)
-		}
-
 		var mutRate registry.MutationRate
 		if mm, ok := message.(registry.MutableMessage); ok {
 			mutRate = mm.Rate()
@@ -217,14 +230,13 @@ func main() {
 	zap.ReplaceGlobals(logger)
 }
 
-func Send(ctx context.Context, stream network.Stream, handler registry.MessageHandler) error {
-	err := handler(ctx, stream)
+func Send(ctx context.Context, stream network.Stream, handler registry.MessageHandler) (int64, float64, error) {
+	totalBytes, latency, err := handler(ctx, stream)
 	if err != nil {
 		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
 			stream = nil
 		}
-
 		fmt.Println("Failed to handle message: ", err.Error())
 	}
-	return err
+	return totalBytes, latency, err
 }
