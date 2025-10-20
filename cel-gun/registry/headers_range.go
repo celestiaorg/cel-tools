@@ -16,7 +16,7 @@ import (
 )
 
 type HeaderRangeMessage struct {
-	concreteProvider
+	metricProvider
 
 	request  *p2ppb.HeaderRequest
 	response []*header.ExtendedHeader

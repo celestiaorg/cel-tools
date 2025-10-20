@@ -1,27 +1,21 @@
 package registry
 
-type MetricProvider interface {
-	// Latency is a download time in milliseconds
-	Latency() float64
-	// TotalBytes is the response size
-	TotalBytes() int64
-	// Speed calculates how many bytes were received per 1ms
-	Speed() float64
-}
-
-type concreteProvider struct {
+type metricProvider struct {
 	latency    float64
 	totalBytes int64
 }
 
-func (c *concreteProvider) Latency() float64 {
-	return c.latency
+// Latency returns a download time in milliseconds
+func (m *metricProvider) Latency() float64 {
+	return m.latency
 }
 
-func (c *concreteProvider) TotalBytes() int64 {
-	return c.totalBytes
+// TotalBytes returns the total response size
+func (m *metricProvider) TotalBytes() int64 {
+	return m.totalBytes
 }
 
-func (c *concreteProvider) Speed() float64 {
-	return float64(c.totalBytes) / c.latency
+// Speed returns how many bytes were received per 1ms
+func (m *metricProvider) Speed() float64 {
+	return float64(m.totalBytes) / m.latency
 }

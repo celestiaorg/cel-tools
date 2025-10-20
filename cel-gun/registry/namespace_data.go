@@ -17,7 +17,7 @@ import (
 
 // NamespaceDataMessage implements the Message interface for namespace data requests
 type NamespaceDataMessage struct {
-	concreteProvider
+	metricProvider
 
 	request *shwap.NamespaceDataID
 
