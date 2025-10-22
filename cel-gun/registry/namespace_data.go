@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"io"
 	"time"
 
@@ -13,12 +14,11 @@ import (
 	shrexpb "github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex/pb"
 	"github.com/celestiaorg/go-libp2p-messenger/serde"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // NamespaceDataMessage implements the Message interface for namespace data requests
 type NamespaceDataMessage struct {
-	metricProvider
-
 	request *shwap.NamespaceDataID
 
 	responseData *shwap.NamespaceData
@@ -48,7 +48,6 @@ func (n *NamespaceDataMessage) MarshalRequest() ([]byte, error) {
 }
 
 func (n *NamespaceDataMessage) ReadFrom(reader io.Reader) (int64, error) {
-	// TODO: read status first
 	return n.responseData.ReadFrom(reader)
 }
 
@@ -64,7 +63,7 @@ func (n *NamespaceDataMessage) GetResponseSize() uint64 {
 }
 
 func (n *NamespaceDataMessage) Handler() MessageHandler {
-	return func(ctx context.Context, stream network.Stream) error {
+	return func(ctx context.Context, stream network.Stream) (int64, float64, error) {
 		err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err != nil {
 			fmt.Println("set read deadline err: ", err.Error())
@@ -72,7 +71,7 @@ func (n *NamespaceDataMessage) Handler() MessageHandler {
 
 		_, err = n.request.WriteTo(stream)
 		if err != nil {
-			return err
+			return 0, 0, err
 		}
 		_ = stream.CloseWrite()
 
@@ -85,31 +84,33 @@ func (n *NamespaceDataMessage) Handler() MessageHandler {
 		_, err = serde.Read(stream, &statusResp)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
+				return 0, 0, fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
 			}
-			return fmt.Errorf("unexpected error during reading the status from stream: %w", err)
+			return 0, 0, fmt.Errorf("unexpected error during reading the status from stream: %w", err)
 		}
 
 		switch statusResp.Status {
 		case shrexpb.Status_OK:
 		case shrexpb.Status_NOT_FOUND:
-			return shrex.ErrNotFound
+			return 0, 0, shrex.ErrNotFound
 		case shrexpb.Status_INTERNAL:
-			return shrex.ErrInternalServer
+			return 0, 0, shrex.ErrInternalServer
 		default:
-			return shrex.ErrInvalidResponse
+			return 0, 0, shrex.ErrInvalidResponse
 		}
 
 		startTime := time.Now()
 		totalBytes, err := n.ReadFrom(stream)
 		if err != nil {
-			return fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
+			return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
 		}
 
 		endTime := time.Since(startTime)
-		n.latency = float64(endTime.Milliseconds())
-		n.totalBytes = totalBytes
 		_ = stream.CloseRead()
-		return nil
+		return totalBytes, float64(endTime.Milliseconds()), nil
 	}
+}
+
+func (n *NamespaceDataMessage) Preload(context.Context, string, peer.ID) error {
+	return nil
 }

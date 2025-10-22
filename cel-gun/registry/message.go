@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // init registers all built-in message types
@@ -14,6 +15,7 @@ func init() {
 	RegisterMessage("header_range_request", func() Message {
 		return &HeaderRangeMessage{}
 	})
+	RegisterMessage("samples_request", func() Message { return &SampleRanges{} })
 }
 
 // Message interface defines the contract for all message types
@@ -29,12 +31,16 @@ type Message interface {
 	// GetResponseSize returns the size of the response for metrics
 	GetResponseSize() uint64
 
-	Handler() MessageHandler
+	// Preload performs any initialization or resource loading that may improve
+	// performance or prepare the implementation for use. Calling this method
+	// is optional.
+	// Implementations without preload requirements should return nil.
+	Preload(context.Context, string, peer.ID) error
 
-	MetricProvider
+	Handler() MessageHandler
 }
 
-type MessageHandler func(context.Context, network.Stream) error
+type MessageHandler func(context.Context, network.Stream) (int64, float64, error)
 
 // MutationRate defines how often to mutate the message
 type MutationRate int

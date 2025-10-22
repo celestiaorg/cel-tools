@@ -8,6 +8,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"github.com/celestiaorg/celestia-node/header"
 	p2ppb "github.com/celestiaorg/go-header/p2p/pb"
 	"github.com/celestiaorg/go-libp2p-messenger/serde"
@@ -16,8 +18,6 @@ import (
 )
 
 type HeaderRangeMessage struct {
-	metricProvider
-
 	request  *p2ppb.HeaderRequest
 	response []*header.ExtendedHeader
 	respSize uint64
@@ -149,7 +149,7 @@ func (h *HeaderRangeMessage) Mutate() error {
 func (h *HeaderRangeMessage) Rate() MutationRate { return PerShot }
 
 func (h *HeaderRangeMessage) Handler() MessageHandler {
-	return func(ctx context.Context, stream network.Stream) error {
+	return func(ctx context.Context, stream network.Stream) (int64, float64, error) {
 		err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		if err != nil {
 			fmt.Println("set read deadline err: ", err.Error())
@@ -157,7 +157,7 @@ func (h *HeaderRangeMessage) Handler() MessageHandler {
 
 		_, err = h.WriteTo(stream)
 		if err != nil {
-			return err
+			return 0, 0, err
 		}
 		_ = stream.CloseWrite()
 
@@ -171,13 +171,15 @@ func (h *HeaderRangeMessage) Handler() MessageHandler {
 		_, err = h.ReadFrom(stream)
 		if err != nil {
 			fmt.Println("ERR reading message from stream: ", err.Error())
-			return err
+			return 0, 0, err
 		}
 		_ = stream.CloseRead()
 
 		endTime := time.Since(startTime)
-		h.latency = float64(endTime.Milliseconds())
-		h.totalBytes = int64(h.GetResponseSize())
-		return nil
+		return int64(h.GetResponseSize()), float64(endTime.Milliseconds()), nil
 	}
+}
+
+func (n *HeaderRangeMessage) Preload(context.Context, string, peer.ID) error {
+	return nil
 }
