@@ -100,6 +100,9 @@ func (n *NamespaceDataMessage) Handler() MessageHandler {
 		}
 
 		startTime := time.Now()
+
+		n.responseData = new(shwap.NamespaceData)
+
 		totalBytes, err := n.ReadFrom(stream)
 		if err != nil {
 			return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
