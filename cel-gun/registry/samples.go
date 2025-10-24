@@ -86,13 +86,19 @@ func (sr *SampleRanges) UnmarshalRequest(data []byte) error {
 
 // Preload creates a default host and requests a range of headers from the specified peer. These headers
 // will be used to build sample ranges.
-func (sr *SampleRanges) Preload(ctx context.Context, network string, peer peer.ID) error {
+func (sr *SampleRanges) Preload(ctx context.Context, network string, peer peer.AddrInfo) error {
 	protocolString := sr.rngMessage.ProtocolString(network)
 	host, err := libp2p.New()
 	if err != nil {
 		return err
 	}
-	stream, err := host.NewStream(ctx, peer, protocol.ID(protocolString))
+
+	err = host.Connect(ctx, peer)
+	if err != nil {
+		return err
+	}
+
+	stream, err := host.NewStream(ctx, peer.ID, protocol.ID(protocolString))
 	if err != nil {
 		return err
 	}
@@ -140,67 +146,93 @@ func (sr *SampleRanges) GetResponseSize() uint64 {
 // Send shoots a range of samples for the specified height.
 func (sr *SampleRanges) Send(ctx context.Context, host host.Host, target peer.ID, protocol protocol.ID) (int64, float64, error) {
 	sampleRng := sr.ranges[sr.rangeIndex]
-	var (
-		totalBytes   int64
-		totalLatency float64
-	)
+	bytesRead := make([]int64, len(sampleRng.sampleMessages))
+	timeToRead := make([]time.Duration, len(sampleRng.sampleMessages))
+	errCh := make(chan error)
+	doneCh := make(chan struct{}, len(sampleRng.sampleMessages))
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	for i, message := range sampleRng.sampleMessages {
-		stream, err := host.NewStream(ctx, target, protocol)
-		if err != nil {
-			return 0, 0, err
-		}
-
-		err = stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err != nil {
-			fmt.Println("set read deadline err: ", err.Error())
-		}
-
-		_, err = message.request.WriteTo(stream)
-		if err != nil {
-			stream.Close()
-			return 0, 0, err
-		}
-
-		err = stream.SetReadDeadline(time.Now().Add(time.Minute))
-		if err != nil {
-			fmt.Println("set read deadline err: ", err.Error())
-		}
-
-		var statusResp shrexpb.Response
-		_, err = serde.Read(stream, &statusResp)
-		if err != nil {
-			stream.Close()
-			if errors.Is(err, io.EOF) {
-				return 0, 0, fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
+		go func(i int, message *SampleMessage) {
+			stream, err := host.NewStream(ctx, target, protocol)
+			if err != nil {
+				fmt.Println(err)
+				errCh <- err
 			}
-			return 0, 0, fmt.Errorf("unexpected error during reading the status from stream: %w", err)
-		}
-		switch statusResp.Status {
-		case shrexpb.Status_OK:
-		case shrexpb.Status_NOT_FOUND:
-			return 0, 0, shrex.ErrNotFound
-		case shrexpb.Status_INTERNAL:
-			return 0, 0, shrex.ErrInternalServer
-		default:
-			return 0, 0, shrex.ErrInvalidResponse
-		}
+			defer stream.Close()
+			err = stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err != nil {
+				fmt.Println("set read deadline err: ", err.Error())
+			}
 
-		startTime := time.Now()
-		length, err := message.request.ReadFrom(stream)
-		if err != nil {
+			_, err = message.request.WriteTo(stream)
+			if err != nil {
+				fmt.Println("err Sending a request ", err)
+			}
+			err = stream.SetReadDeadline(time.Now().Add(time.Minute))
+			if err != nil {
+				fmt.Println("set read deadline err: ", err.Error())
+			}
+			var statusResp shrexpb.Response
+			statusTime := time.Now()
+			_, err = serde.Read(stream, &statusResp)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					errCh <- fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
+					return
+				}
+				errCh <- fmt.Errorf("unexpected error during reading the status from stream: %w", err)
+				return
+			}
+
+			switch statusResp.Status {
+			case shrexpb.Status_OK:
+			case shrexpb.Status_NOT_FOUND:
+				errCh <- shrex.ErrNotFound
+				return
+			case shrexpb.Status_INTERNAL:
+				errCh <- shrex.ErrInternalServer
+				return
+			default:
+				errCh <- shrex.ErrInvalidResponse
+				return
+			}
+
+			message.response = new(shwap.Sample)
+			length, err := message.response.ReadFrom(stream)
+			if err != nil {
+				errCh <- fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
+				return
+			}
 			stream.Close()
-			return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
-		}
 
-		endTime := time.Since(startTime)
-		totalLatency += float64(endTime.Milliseconds())
-		totalBytes += length
-		sampleRng.sampleMessages[i] = message
+			bytesRead[i] = length
+			timeToRead[i] = time.Since(statusTime)
+			sampleRng.sampleMessages[i] = message
+			doneCh <- struct{}{}
+		}(i, message)
 	}
 
+	for range sampleRng.sampleMessages {
+		select {
+		case err := <-errCh:
+			return 0, 0, err
+		case <-ctx.Done():
+			return 0, 0, errors.New("context canceled")
+		case <-doneCh:
+		}
+	}
 	sr.ranges[sr.rangeIndex] = sampleRng
-	return totalBytes, totalLatency, nil
+	totaBytesRead := int64(0)
+	totalLatency := time.Duration(0)
+	for i, read := range bytesRead {
+		totaBytesRead += read
+		totalLatency += timeToRead[i]
+	}
+	latency := totalLatency.Milliseconds() / int64(len(sampleRng.sampleMessages))
+	return totaBytesRead, float64(latency), nil
 }
 
 func (sr *SampleRanges) Rate() MutationRate { return PerShot }

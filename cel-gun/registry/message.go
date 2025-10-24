@@ -36,7 +36,7 @@ type Message interface {
 	// performance or prepare the implementation for use. Calling this method
 	// is optional.
 	// Implementations without preload requirements should return nil.
-	Preload(context.Context, string, peer.ID) error
+	Preload(context.Context, string, peer.AddrInfo) error
 
 	// Send sends the message to the specified peer under specific protocol ID.
 	Send(context.Context, host.Host, peer.ID, protocol.ID) (int64, float64, error)

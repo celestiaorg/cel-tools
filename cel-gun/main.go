@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -130,13 +131,16 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 		}
 		panic(err)
 	}
+	if latency == 0 {
+		latency = 1
+	}
 
 	g.aggr.Report(Report{
 		Fail:              false,
 		PayloadSize:       uint64(totalBytes),
 		TotalDownloadTime: latency,
 		DownloadSpeed:     float64(totalBytes) / latency,
-		HostPID:           h.ID().String(),
+		HostPID:           strconv.Itoa(int(g.conf.Message.StartHeight())),
 	})
 
 	fmt.Println("Successfully got a response:  ", totalBytes, "      in ", latency, " ms    from host:   ", h.ID().String())
@@ -187,7 +191,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	err = message.Preload(ctx, networkID, id.ID)
+	err = message.Preload(ctx, networkID, *id)
 	if err != nil {
 		panic(fmt.Errorf("failed to preload message: %w", err))
 	}

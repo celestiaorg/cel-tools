@@ -148,7 +148,7 @@ func (h *HeaderRangeMessage) Mutate() error {
 
 func (h *HeaderRangeMessage) Rate() MutationRate { return PerShot }
 
-func (n *HeaderRangeMessage) Preload(context.Context, string, peer.ID) error {
+func (n *HeaderRangeMessage) Preload(context.Context, string, peer.AddrInfo) error {
 	return nil
 }
 

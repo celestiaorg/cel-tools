@@ -63,16 +63,13 @@ func (n *NamespaceDataMessage) GetResponseSize() uint64 {
 	return uint64(len(n.responseData.Flatten())) * 512
 }
 
-func (n *NamespaceDataMessage) Preload(context.Context, string, peer.ID) error {
+func (n *NamespaceDataMessage) Preload(context.Context, string, peer.AddrInfo) error {
 	return nil
 }
 
 func (n *NamespaceDataMessage) Send(ctx context.Context, host host.Host, target peer.ID, protocol protocol.ID) (int64, float64, error) {
 	stream, err := host.NewStream(ctx, target, protocol)
 	if err != nil {
-		//if errors.Is(errors.Unwrap(err), network.ErrResourceLimitExceeded) {
-		//	return 0,0,nil
-		//}
 		return 0, 0, err
 	}
 	defer stream.Close()
