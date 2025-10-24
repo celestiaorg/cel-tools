@@ -6,7 +6,7 @@ cel-gun is a testing utility meant to be used to load test a given celestia prot
 
 ```bash
 sh cel-gun.sh  <network ID> <multiaddr target> <message type> <filepath to message> 
-# example sh cel-gun.sh mocha-4 
+# example sh cel-gun.sh mocha-4 /dnsaddr/mocha-boot.pops.one/p2p/12D3KooWDzNyDSvTBdKQAmnsUdAyQCQWwM3ReXTmPaaf6LzfNwR namespace_data_request ./registry/testdata/nd_req.json
 ```
 
 ### Network ID
