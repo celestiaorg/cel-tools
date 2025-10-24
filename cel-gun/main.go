@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -124,17 +123,12 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 
 	fmt.Println("Shooting from host:   ", h.ID().String())
 
-	stream, err := h.NewStream(ctx, g.target, g.conf.ProtocolID)
+	totalBytes, latency, err := g.conf.Message.Send(ctx, h, g.target, g.conf.ProtocolID)
 	if err != nil {
 		if errors.Is(errors.Unwrap(err), network.ErrResourceLimitExceeded) {
 			return
 		}
 		panic(err)
-	}
-
-	totalBytes, latency, err := Send(ctx, stream, g.conf.Message.Handler())
-	if err != nil {
-		return
 	}
 
 	g.aggr.Report(Report{
@@ -228,15 +222,4 @@ func main() {
 		panic(err)
 	}
 	zap.ReplaceGlobals(logger)
-}
-
-func Send(ctx context.Context, stream network.Stream, handler registry.MessageHandler) (int64, float64, error) {
-	totalBytes, latency, err := handler(ctx, stream)
-	if err != nil {
-		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
-			stream = nil
-		}
-		fmt.Println("Failed to handle message: ", err.Error())
-	}
-	return totalBytes, latency, err
 }

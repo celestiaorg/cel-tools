@@ -12,7 +12,7 @@ import (
 	shrexpb "github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex/pb"
 	"github.com/celestiaorg/go-libp2p-messenger/serde"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"io"
@@ -137,68 +137,70 @@ func (sr *SampleRanges) GetResponseSize() uint64 {
 	panic("not implemented")
 }
 
-// Handler returns function that shoots a range of samples for the specified height. It
-// returns total latency and bytes read for a particular range.
-func (sr *SampleRanges) Handler() MessageHandler {
-	return func(ctx context.Context, stream network.Stream) (int64, float64, error) {
-		sampleRng := sr.ranges[sr.rangeIndex]
-		var (
-			totalBytes   int64
-			totalLatency float64
-		)
-		for i, message := range sampleRng.sampleMessages {
-			err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err != nil {
-				fmt.Println("set read deadline err: ", err.Error())
-			}
+// Send shoots a range of samples for the specified height.
+func (sr *SampleRanges) Send(ctx context.Context, host host.Host, target peer.ID, protocol protocol.ID) (int64, float64, error) {
+	sampleRng := sr.ranges[sr.rangeIndex]
+	var (
+		totalBytes   int64
+		totalLatency float64
+	)
 
-			_, err = message.request.WriteTo(stream)
-			if err != nil {
-				_ = stream.Close()
-				return 0, 0, err
-			}
-
-			err = stream.SetReadDeadline(time.Now().Add(time.Minute))
-			if err != nil {
-				fmt.Println("set read deadline err: ", err.Error())
-			}
-
-			var statusResp shrexpb.Response
-			_, err = serde.Read(stream, &statusResp)
-			if err != nil {
-				_ = stream.Close()
-				if errors.Is(err, io.EOF) {
-					return 0, 0, fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
-				}
-				return 0, 0, fmt.Errorf("unexpected error during reading the status from stream: %w", err)
-			}
-			switch statusResp.Status {
-			case shrexpb.Status_OK:
-			case shrexpb.Status_NOT_FOUND:
-				return 0, 0, shrex.ErrNotFound
-			case shrexpb.Status_INTERNAL:
-				return 0, 0, shrex.ErrInternalServer
-			default:
-				return 0, 0, shrex.ErrInvalidResponse
-			}
-
-			startTime := time.Now()
-			length, err := message.request.ReadFrom(stream)
-			if err != nil {
-				return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
-			}
-
-			endTime := time.Since(startTime)
-			totalLatency += float64(endTime.Milliseconds())
-			totalBytes += length
-			sampleRng.sampleMessages[i] = message
+	for i, message := range sampleRng.sampleMessages {
+		stream, err := host.NewStream(ctx, target, protocol)
+		if err != nil {
+			return 0, 0, err
 		}
 
-		sr.ranges[sr.rangeIndex] = sampleRng
-		_ = stream.Close()
-		return totalBytes, totalLatency, nil
+		err = stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err != nil {
+			fmt.Println("set read deadline err: ", err.Error())
+		}
+
+		_, err = message.request.WriteTo(stream)
+		if err != nil {
+			stream.Close()
+			return 0, 0, err
+		}
+
+		err = stream.SetReadDeadline(time.Now().Add(time.Minute))
+		if err != nil {
+			fmt.Println("set read deadline err: ", err.Error())
+		}
+
+		var statusResp shrexpb.Response
+		_, err = serde.Read(stream, &statusResp)
+		if err != nil {
+			stream.Close()
+			if errors.Is(err, io.EOF) {
+				return 0, 0, fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
+			}
+			return 0, 0, fmt.Errorf("unexpected error during reading the status from stream: %w", err)
+		}
+		switch statusResp.Status {
+		case shrexpb.Status_OK:
+		case shrexpb.Status_NOT_FOUND:
+			return 0, 0, shrex.ErrNotFound
+		case shrexpb.Status_INTERNAL:
+			return 0, 0, shrex.ErrInternalServer
+		default:
+			return 0, 0, shrex.ErrInvalidResponse
+		}
+
+		startTime := time.Now()
+		length, err := message.request.ReadFrom(stream)
+		if err != nil {
+			stream.Close()
+			return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
+		}
+
+		endTime := time.Since(startTime)
+		totalLatency += float64(endTime.Milliseconds())
+		totalBytes += length
+		sampleRng.sampleMessages[i] = message
 	}
 
+	sr.ranges[sr.rangeIndex] = sampleRng
+	return totalBytes, totalLatency, nil
 }
 
 func (sr *SampleRanges) Rate() MutationRate { return PerShot }

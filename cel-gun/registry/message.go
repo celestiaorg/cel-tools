@@ -3,8 +3,9 @@ package registry
 import (
 	"context"
 	"fmt"
-	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 )
 
 // init registers all built-in message types
@@ -37,10 +38,9 @@ type Message interface {
 	// Implementations without preload requirements should return nil.
 	Preload(context.Context, string, peer.ID) error
 
-	Handler() MessageHandler
+	// Send sends the message to the specified peer under specific protocol ID.
+	Send(context.Context, host.Host, peer.ID, protocol.ID) (int64, float64, error)
 }
-
-type MessageHandler func(context.Context, network.Stream) (int64, float64, error)
 
 // MutationRate defines how often to mutate the message
 type MutationRate int
