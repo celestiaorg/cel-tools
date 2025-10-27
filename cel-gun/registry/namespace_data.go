@@ -70,7 +70,10 @@ func (n *NamespaceDataMessage) Send(ctx context.Context, host host.Host, target 
 	if err != nil {
 		return 0, 0, err
 	}
-
+	err = client.WithMetrics()
+	if err != nil {
+		return 0, 0, err
+	}
 	start := time.Now()
 	length, err := client.Get(ctx, n.request, n.responseData, target)
 	if err != nil {

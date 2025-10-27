@@ -150,7 +150,10 @@ func (sr *SampleRanges) Send(ctx context.Context, host host.Host, target peer.ID
 	if err != nil {
 		return 0, 0, err
 	}
-
+	err = client.WithMetrics()
+	if err != nil {
+		return 0, 0, err
+	}
 	sampleRng := sr.ranges[sr.rangeIndex]
 	bytesRead := make([]int64, len(sampleRng.sampleMessages))
 	timeToRead := make([]time.Duration, len(sampleRng.sampleMessages))
