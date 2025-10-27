@@ -164,6 +164,7 @@ func (sr *SampleRanges) Send(ctx context.Context, host host.Host, target peer.ID
 
 	for i, message := range sampleRng.sampleMessages {
 		errGroup.Go(func() error {
+			message.response = new(shwap.Sample)
 			start := time.Now()
 			length, err := client.Get(ctx, message.request, message.response, target)
 			if err != nil {
