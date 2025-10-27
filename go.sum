@@ -796,8 +796,8 @@ github.com/celestiaorg/celestia-app/v6 v6.0.5-mocha h1:yulXc4wCoN/6Tk7LN60dq0qHu
 github.com/celestiaorg/celestia-app/v6 v6.0.5-mocha/go.mod h1:nxy0MoB7daPjWKpt07hrX3ASrQ4lWyT7QiudqrJRoYY=
 github.com/celestiaorg/celestia-core v0.39.4 h1:h0WaG8KsP0JyiAVhHipoIgvBP0CYLG/9whUccy1lDlY=
 github.com/celestiaorg/celestia-core v0.39.4/go.mod h1:t7cSYwLFmpz5RjIBpC3QjpbRoa+RfQ0ULdh+LciKuq8=
-github.com/celestiaorg/celestia-node v0.26.5-0.20251013085623-5ef2686981f1 h1:76jbxeJLD8e87LKpVhxEUUwTrNZjbUMnTMx66daAKuM=
-github.com/celestiaorg/celestia-node v0.26.5-0.20251013085623-5ef2686981f1/go.mod h1:u8vmNEFKZSk1meC3B2l0j+UMT1mx2WXj7MVcoVS6sB0=
+github.com/celestiaorg/celestia-node v0.26.5-0.20251027124634-6b3fb155a7a7 h1:nS97AxRevwe0LkmgEYRVtX07EVq3hmsa0qalRaslf74=
+github.com/celestiaorg/celestia-node v0.26.5-0.20251027124634-6b3fb155a7a7/go.mod h1:u8vmNEFKZSk1meC3B2l0j+UMT1mx2WXj7MVcoVS6sB0=
 github.com/celestiaorg/cosmos-sdk v0.51.2 h1:a9WguK7BaeuqCVnOa3m3ThwXKBL/RxQ46gRz+TP4yKQ=
 github.com/celestiaorg/cosmos-sdk v0.51.2/go.mod h1:KSCi5EM7aWwZRtCHCOH4K51a9OcjEKt4i/pr1txrnRA=
 github.com/celestiaorg/cosmos-sdk/x/upgrade v0.2.0 h1:GyDYfK8dLETlUI7F+w+3QYQgAszUegMXgB6cTbDm7CA=

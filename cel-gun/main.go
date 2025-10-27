@@ -14,7 +14,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/afero"
 	"github.com/yandex/pandora/cli"
@@ -39,11 +38,11 @@ type Gun struct {
 }
 
 type GunConfig struct {
-	ProtocolID protocol.ID
-	Target     multiaddr.Multiaddr
-	Message    registry.Message
-	MutRate    registry.MutationRate
-	Parallel   int
+	Network  string
+	Target   multiaddr.Multiaddr
+	Message  registry.Message
+	MutRate  registry.MutationRate
+	Parallel int
 }
 
 func NewGun(conf GunConfig) *Gun {
@@ -124,15 +123,12 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 
 	fmt.Println("Shooting from host:   ", h.ID().String())
 
-	totalBytes, latency, err := g.conf.Message.Send(ctx, h, g.target, g.conf.ProtocolID)
+	totalBytes, latency, err := g.conf.Message.Send(ctx, h, g.target, g.conf.Network, g.aggr)
 	if err != nil {
 		if errors.Is(errors.Unwrap(err), network.ErrResourceLimitExceeded) {
 			return
 		}
 		panic(err)
-	}
-	if latency == 0 {
-		latency = 1
 	}
 
 	g.aggr.Report(Report{
@@ -186,8 +182,6 @@ func main() {
 		panic(fmt.Errorf("failed to load message: %w", err))
 	}
 
-	protocolID := message.ProtocolString(networkID)
-
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -209,10 +203,10 @@ func main() {
 		}
 
 		return GunConfig{
-			ProtocolID: protocol.ID(protocolID),
-			Target:     addr,
-			Message:    message,
-			MutRate:    mutRate,
+			Network: networkID,
+			Target:  addr,
+			Message: message,
+			MutRate: mutRate,
 		}
 	})
 

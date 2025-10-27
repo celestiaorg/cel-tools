@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/yandex/pandora/core"
 	"io"
 	"time"
 
@@ -152,8 +153,8 @@ func (n *HeaderRangeMessage) Preload(context.Context, string, peer.AddrInfo) err
 	return nil
 }
 
-func (h *HeaderRangeMessage) Send(ctx context.Context, host host.Host, target peer.ID, protocol protocol.ID) (int64, float64, error) {
-	stream, err := host.NewStream(ctx, target, protocol)
+func (h *HeaderRangeMessage) Send(ctx context.Context, host host.Host, target peer.ID, networkID string, _ core.Aggregator) (int64, float64, error) {
+	stream, err := host.NewStream(ctx, target, protocol.ID(h.ProtocolString(networkID)))
 	if err != nil {
 		return 0, 0, err
 	}
