@@ -80,8 +80,12 @@ func (n *NamespaceDataMessage) Handler() MessageHandler {
 			fmt.Println("set read deadline err: ", err.Error())
 		}
 
+		// wrap the entire read (of status + resp) with time
+		// to record real latency of the request
+		startTime := time.Now()
+
 		var statusResp shrexpb.Response
-		_, err = serde.Read(stream, &statusResp)
+		statusBytes, err := serde.Read(stream, &statusResp)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return 0, 0, fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
@@ -99,17 +103,18 @@ func (n *NamespaceDataMessage) Handler() MessageHandler {
 			return 0, 0, shrex.ErrInvalidResponse
 		}
 
-		startTime := time.Now()
-
 		n.responseData = new(shwap.NamespaceData)
 
-		totalBytes, err := n.ReadFrom(stream)
+		respBytes, err := n.ReadFrom(stream)
 		if err != nil {
 			return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
 		}
 
 		endTime := time.Since(startTime)
+		totalBytes := int64(statusBytes) + respBytes
+
 		_ = stream.CloseRead()
+
 		return totalBytes, float64(endTime.Milliseconds()), nil
 	}
 }
