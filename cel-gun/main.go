@@ -233,7 +233,7 @@ func main() {
 func Send(ctx context.Context, stream network.Stream, handler registry.MessageHandler) (int64, float64, error) {
 	totalBytes, latency, err := handler(ctx, stream)
 	if err != nil {
-		if strings.Contains(err.Error(), "stream reset") || strings.Contains((err.Error()), "stream closed") {
+		if strings.Contains(err.Error(), "stream reset") || strings.Contains(err.Error(), "stream closed") {
 			stream = nil
 		}
 		fmt.Println("Failed to handle message: ", err.Error())
