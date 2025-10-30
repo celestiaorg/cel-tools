@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"math/rand"
 	"os"
 	"strings"
@@ -47,9 +48,14 @@ type GunConfig struct {
 }
 
 func NewGun(conf GunConfig) *Gun {
+	resourceMgr, err := rcmgr.NewResourceManager(rcmgr.NewFixedLimiter(rcmgr.InfiniteLimits))
+	if err != nil {
+		panic(err)
+	}
+
 	hosts := make([]host.Host, conf.Parallel)
 	for i := 0; i < conf.Parallel; i++ {
-		h, err := libp2p.New()
+		h, err := libp2p.New(libp2p.ResourceManager(resourceMgr))
 		if err != nil {
 			panic(err)
 		}
