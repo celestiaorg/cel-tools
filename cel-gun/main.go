@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -96,9 +97,17 @@ func (g *Gun) Shoot(ammo core.Ammo) {
 	g.counter.Add(1)
 
 	randIdx := rand.Intn(g.conf.Parallel)
-	g.shoot(context.Background(), customAmmo, g.hosts[randIdx])
+
+	wg := sync.WaitGroup{}
+	for range 10 {
+		wg.Go(func() {
+			g.shoot(context.Background(), customAmmo, g.hosts[randIdx])
+		})
+	}
 
 	fmt.Println("-------------------------------------------------SHOT ROUND-------------------------------------------------")
+
+	wg.Wait()
 
 	if g.conf.MutRate == registry.PerShot {
 		mm, ok := g.conf.Message.(registry.MutableMessage)

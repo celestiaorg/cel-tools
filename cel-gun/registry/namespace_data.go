@@ -25,7 +25,7 @@ type NamespaceDataMessage struct {
 }
 
 func (n *NamespaceDataMessage) Mutate() error {
-	newEDSID, err := shwap.NewEdsID(n.request.Height() - 50)
+	newEDSID, err := shwap.NewEdsID(n.request.Height() - 10)
 	if err != nil {
 		return err
 	}
