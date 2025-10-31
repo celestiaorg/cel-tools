@@ -24,6 +24,21 @@ type NamespaceDataMessage struct {
 	responseData *shwap.NamespaceData
 }
 
+func (n *NamespaceDataMessage) Mutate() error {
+	newEDSID, err := shwap.NewEdsID(n.request.Height() - 10)
+	if err != nil {
+		return err
+	}
+	ns := n.request.DataNamespace
+	n.request = &shwap.NamespaceDataID{
+		EdsID:         newEDSID,
+		DataNamespace: ns,
+	}
+	return nil
+}
+
+func (n *NamespaceDataMessage) Rate() MutationRate { return PerShot }
+
 func (n *NamespaceDataMessage) ProtocolString(network string) string {
 	return string(shrex.ProtocolID(network, n.request.Name()))
 }
