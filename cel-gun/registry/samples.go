@@ -1,21 +1,29 @@
+// Handling samples requests:
+// 1. Use headers_request.json to preload headers and build header ranges
+// 2. These headers MUST NOT be empty
+// 3. Since libp2p limits concurrent connections from the same IP address to 8,
+//    the resource manager on the server side should be set to NullResourceManager
+//    to allow load testing with multiple workers from a single IP
+// 4. `times` field in load.yaml is responsible for spawning workers
+
 package registry
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/celestiaorg/celestia-node/header"
 	"github.com/celestiaorg/celestia-node/share"
 	"github.com/celestiaorg/celestia-node/share/availability/light"
 	"github.com/celestiaorg/celestia-node/share/shwap"
 	"github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex"
-	shrexpb "github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex/pb"
-	"github.com/celestiaorg/go-libp2p-messenger/serde"
+	p2ppb "github.com/celestiaorg/go-header/p2p/pb"
 	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	"io"
+	"github.com/yandex/pandora/core"
+	"golang.org/x/sync/errgroup"
+	"sync"
 	"time"
 )
 
@@ -54,12 +62,15 @@ func NewSamplesRange(height uint64, squareSize int) *SamplesRange {
 
 // SampleRanges is a collection of SamplesRange for multiple heights.
 type SampleRanges struct {
-	rngMessage *HeaderRangeMessage
+	Origin uint64
 
 	ranges []*SamplesRange
 
+	rangeMk sync.Mutex
 	// last handled index from `ranges`
 	rangeIndex int
+
+	height uint64
 }
 
 // ProtocolString returns the protocol string for this message type
@@ -69,7 +80,9 @@ func (sr *SampleRanges) ProtocolString(network string) string {
 
 // StartHeight returns the height for this message
 func (sr *SampleRanges) StartHeight() uint64 {
-	return sr.rngMessage.response[sr.rangeIndex].Height()
+	sr.rangeMk.Lock()
+	defer sr.rangeMk.Unlock()
+	return sr.ranges[sr.rangeIndex].sampleMessages[0].request.Height()
 }
 
 // UnmarshalRequest deserializes the request from bytes
@@ -80,48 +93,83 @@ func (sr *SampleRanges) UnmarshalRequest(data []byte) error {
 	if err != nil {
 		return err
 	}
-	sr.rngMessage = rng
+	sr.Origin = rng.request.GetOrigin()
+	sr.height = rng.request.GetOrigin()
 	return nil
 }
 
 // Preload creates a default host and requests a range of headers from the specified peer. These headers
 // will be used to build sample ranges.
-func (sr *SampleRanges) Preload(ctx context.Context, network string, peer peer.ID) error {
-	protocolString := sr.rngMessage.ProtocolString(network)
+func (sr *SampleRanges) Preload(ctx context.Context, network string, peer peer.AddrInfo) error {
+	amountPerReq := uint64(64)
+
+	hr := &HeaderRangeMessage{
+		request: &p2ppb.HeaderRequest{
+			Data:   &p2ppb.HeaderRequest_Origin{Origin: sr.Origin},
+			Amount: amountPerReq,
+		},
+	}
+	protocolString := hr.ProtocolString(network)
+
 	host, err := libp2p.New()
 	if err != nil {
 		return err
 	}
-	stream, err := host.NewStream(ctx, peer, protocol.ID(protocolString))
+
+	err = host.Connect(ctx, peer)
+	if err != nil {
+		return err
+	}
+
+	stream, err := host.NewStream(ctx, peer.ID, protocol.ID(protocolString))
 	if err != nil {
 		return err
 	}
 	defer stream.Close()
 
-	_, err = sr.rngMessage.WriteTo(stream)
-	if err != nil {
-		return err
+	recievedHeadersCount, targetedHeaders := 0, 20
+
+	receivedHeaders := make([]*header.ExtendedHeader, 0, targetedHeaders)
+	for recievedHeadersCount < targetedHeaders {
+		_, err := hr.WriteTo(stream)
+		if err != nil {
+			return err
+		}
+		_, err = hr.ReadFrom(stream)
+		if err != nil {
+			return err
+		}
+
+		hdrs := skipEmptyHeaders(hr.response)
+		receivedHeaders = append(receivedHeaders, hdrs...)
+		recievedHeadersCount += len(hdrs)
+		if recievedHeadersCount == targetedHeaders {
+			break
+		}
+
+		remainingHeaders := uint64(targetedHeaders - recievedHeadersCount)
+		if remainingHeaders > amountPerReq {
+			remainingHeaders = amountPerReq
+		}
+
+		lastHeight := hr.request.GetOrigin()
+		if len(receivedHeaders) > 0 {
+			lastHeight = receivedHeaders[len(receivedHeaders)-1].Height()
+		}
+		hr = &HeaderRangeMessage{
+			request: &p2ppb.HeaderRequest{
+				Data:   &p2ppb.HeaderRequest_Origin{Origin: lastHeight + 1},
+				Amount: remainingHeaders,
+			},
+		}
 	}
 
-	_, err = sr.rngMessage.ReadFrom(stream)
-	if err != nil {
-		return err
-	}
+	sr.ranges = make([]*SamplesRange, len(receivedHeaders))
+	for i, hdr := range receivedHeaders {
+		go func(i int, h *header.ExtendedHeader) {
+			sr.ranges[i] = NewSamplesRange(h.Height(), len(h.DAH.RowRoots))
+		}(i, hdr)
 
-	if len(sr.rngMessage.response) != int(sr.rngMessage.request.GetAmount()) {
-		return fmt.Errorf("invalid number of headers received, expected %d, got %d",
-			sr.rngMessage.request.GetAmount(), len(sr.rngMessage.response),
-		)
-	}
-	result := skipEmptyHeaders(sr.rngMessage.response)
-	if len(result) == 0 {
-		return fmt.Errorf("headers range contained empty headers")
-	}
-	sr.rngMessage.response = result
-
-	sr.ranges = make([]*SamplesRange, len(sr.rngMessage.response))
-	for i, message := range sr.rngMessage.response {
-		sr.ranges[i] = NewSamplesRange(message.Height(), len(message.DAH.RowRoots))
 	}
 	return nil
 }
@@ -137,68 +185,80 @@ func (sr *SampleRanges) GetResponseSize() uint64 {
 	panic("not implemented")
 }
 
-// Handler returns function that shoots a range of samples for the specified height. It
-// returns total latency and bytes read for a particular range.
-func (sr *SampleRanges) Handler() MessageHandler {
-	return func(ctx context.Context, stream network.Stream) (int64, float64, error) {
-		sampleRng := sr.ranges[sr.rangeIndex]
-		var (
-			totalBytes   int64
-			totalLatency float64
-		)
-		for i, message := range sampleRng.sampleMessages {
-			err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err != nil {
-				fmt.Println("set read deadline err: ", err.Error())
-			}
+// Send shoots a range of samples for the specified height.
+func (sr *SampleRanges) Send(ctx context.Context, host host.Host, target peer.ID, networkID string, aggregator core.Aggregator) (int64, float64, error) {
+	sr.rangeMk.Lock()
+	rng := sr.ranges[sr.rangeIndex]
+	sr.rangeMk.Unlock()
 
-			_, err = message.request.WriteTo(stream)
-			if err != nil {
-				_ = stream.Close()
-				return 0, 0, err
-			}
-
-			err = stream.SetReadDeadline(time.Now().Add(time.Minute))
-			if err != nil {
-				fmt.Println("set read deadline err: ", err.Error())
-			}
-
-			var statusResp shrexpb.Response
-			_, err = serde.Read(stream, &statusResp)
-			if err != nil {
-				_ = stream.Close()
-				if errors.Is(err, io.EOF) {
-					return 0, 0, fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
-				}
-				return 0, 0, fmt.Errorf("unexpected error during reading the status from stream: %w", err)
-			}
-			switch statusResp.Status {
-			case shrexpb.Status_OK:
-			case shrexpb.Status_NOT_FOUND:
-				return 0, 0, shrex.ErrNotFound
-			case shrexpb.Status_INTERNAL:
-				return 0, 0, shrex.ErrInternalServer
-			default:
-				return 0, 0, shrex.ErrInvalidResponse
-			}
-
-			startTime := time.Now()
-			length, err := message.request.ReadFrom(stream)
-			if err != nil {
-				return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
-			}
-
-			endTime := time.Since(startTime)
-			totalLatency += float64(endTime.Milliseconds())
-			totalBytes += length
-			sampleRng.sampleMessages[i] = message
-		}
-
-		sr.ranges[sr.rangeIndex] = sampleRng
-		_ = stream.Close()
-		return totalBytes, totalLatency, nil
+	params := shrex.DefaultClientParameters()
+	params.WithNetworkID(networkID)
+	client, err := shrex.NewClient(params, host)
+	if err != nil {
+		return 0, 0, err
 	}
 
+	bytesRead := make([]int64, len(rng.sampleMessages))
+	timeToRead := make([]time.Duration, len(rng.sampleMessages))
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errGroup, ctx := errgroup.WithContext(ctx)
+
+	wallClock := time.Now()
+
+	for i, message := range rng.sampleMessages {
+		errGroup.Go(func() error {
+			resp := new(shwap.Sample)
+			start := time.Now()
+			length, err := client.Get(ctx, message.request, resp, target)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return err
+			}
+			end := time.Since(start)
+			bytesRead[i] = length
+			timeToRead[i] = end
+			aggregator.Report(struct {
+				Fail          bool    `json:"fail"`
+				PayloadSize   uint64  `json:"sample_payload_size"`
+				Height        uint64  `json:"height"`
+				RowIndex      uint64  `json:"row_index"`
+				ColIndex      uint64  `json:"col_index"`
+				DownloadTime  float64 `json:"download_time_ms"`
+				DownloadSpeed float64 `json:"download_speed_b_per_s"` // bytes per second
+			}{
+				Fail:          false,
+				PayloadSize:   uint64(length),
+				Height:        message.request.Height(),
+				RowIndex:      uint64(message.request.RowIndex),
+				ColIndex:      uint64(message.request.ShareIndex),
+				DownloadTime:  float64(end.Milliseconds()),
+				DownloadSpeed: float64(length/end.Milliseconds()) * 1000,
+			},
+			)
+			return nil
+		})
+	}
+	err = errGroup.Wait()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	totalBytesRead := int64(0)
+	totalLatency := time.Duration(0)
+	for i, read := range bytesRead {
+		totalBytesRead += read
+		totalLatency += timeToRead[i]
+	}
+
+	// latency of the longest request
+	wallClockEnd := time.Since(wallClock)
+
+	return totalBytesRead, float64(wallClockEnd.Milliseconds()), nil
 }
 
 func (sr *SampleRanges) Rate() MutationRate { return PerShot }
@@ -206,9 +266,11 @@ func (sr *SampleRanges) Rate() MutationRate { return PerShot }
 // Mutate updates `rangeIndex` allowing to request new range on the nex iteration.
 // Fails if `rangeIndex` will be out of range(>= amount of ranges)
 func (sr *SampleRanges) Mutate() error {
+	sr.rangeMk.Lock()
+	defer sr.rangeMk.Unlock()
 	sr.rangeIndex++
 	if sr.rangeIndex >= len(sr.ranges) {
-		return fmt.Errorf("samples ranges exceeds maximum number of samples ranges")
+		sr.rangeIndex = 0
 	}
 	return nil
 }

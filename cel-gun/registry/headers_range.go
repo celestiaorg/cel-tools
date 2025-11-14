@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/yandex/pandora/core"
 	"io"
 	"time"
 
@@ -13,7 +15,6 @@ import (
 	"github.com/celestiaorg/celestia-node/header"
 	p2ppb "github.com/celestiaorg/go-header/p2p/pb"
 	"github.com/celestiaorg/go-libp2p-messenger/serde"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
 )
 
@@ -148,38 +149,42 @@ func (h *HeaderRangeMessage) Mutate() error {
 
 func (h *HeaderRangeMessage) Rate() MutationRate { return PerShot }
 
-func (h *HeaderRangeMessage) Handler() MessageHandler {
-	return func(ctx context.Context, stream network.Stream) (int64, float64, error) {
-		err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err != nil {
-			fmt.Println("set read deadline err: ", err.Error())
-		}
-
-		_, err = h.WriteTo(stream)
-		if err != nil {
-			return 0, 0, err
-		}
-		_ = stream.CloseWrite()
-
-		err = stream.SetReadDeadline(time.Now().Add(time.Minute))
-		if err != nil {
-			fmt.Println("set read deadline err: ", err.Error())
-		}
-
-		startTime := time.Now()
-
-		_, err = h.ReadFrom(stream)
-		if err != nil {
-			fmt.Println("ERR reading message from stream: ", err.Error())
-			return 0, 0, err
-		}
-		_ = stream.CloseRead()
-
-		endTime := time.Since(startTime)
-		return int64(h.GetResponseSize()), float64(endTime.Milliseconds()), nil
-	}
+func (n *HeaderRangeMessage) Preload(context.Context, string, peer.AddrInfo) error {
+	return nil
 }
 
-func (n *HeaderRangeMessage) Preload(context.Context, string, peer.ID) error {
-	return nil
+func (h *HeaderRangeMessage) Send(ctx context.Context, host host.Host, target peer.ID, networkID string, _ core.Aggregator) (int64, float64, error) {
+	stream, err := host.NewStream(ctx, target, protocol.ID(h.ProtocolString(networkID)))
+	if err != nil {
+		return 0, 0, err
+	}
+	defer stream.Close()
+
+	err = stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err != nil {
+		fmt.Println("set read deadline err: ", err.Error())
+	}
+
+	_, err = h.WriteTo(stream)
+	if err != nil {
+		return 0, 0, err
+	}
+	_ = stream.CloseWrite()
+
+	err = stream.SetReadDeadline(time.Now().Add(time.Minute))
+	if err != nil {
+		fmt.Println("set read deadline err: ", err.Error())
+	}
+
+	startTime := time.Now()
+
+	length, err := h.ReadFrom(stream)
+	if err != nil {
+		fmt.Println("ERR reading message from stream: ", err.Error())
+		return 0, 0, err
+	}
+	_ = stream.CloseRead()
+
+	endTime := time.Since(startTime)
+	return length, float64(endTime.Milliseconds()), nil
 }
