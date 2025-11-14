@@ -3,8 +3,9 @@ package registry
 import (
 	"context"
 	"fmt"
-	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/yandex/pandora/core"
 )
 
 // init registers all built-in message types
@@ -35,12 +36,11 @@ type Message interface {
 	// performance or prepare the implementation for use. Calling this method
 	// is optional.
 	// Implementations without preload requirements should return nil.
-	Preload(context.Context, string, peer.ID) error
+	Preload(context.Context, string, peer.AddrInfo) error
 
-	Handler() MessageHandler
+	// Send sends the message to the specified peer under specific protocol ID.
+	Send(ctx context.Context, host host.Host, target peer.ID, networkID string, _ core.Aggregator) (int64, float64, error)
 }
-
-type MessageHandler func(context.Context, network.Stream) (int64, float64, error)
 
 // MutationRate defines how often to mutate the message
 type MutationRate int

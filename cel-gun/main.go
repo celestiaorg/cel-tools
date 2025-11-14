@@ -4,18 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"math/rand"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
+
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/spf13/afero"
 	"github.com/yandex/pandora/cli"
@@ -40,11 +39,11 @@ type Gun struct {
 }
 
 type GunConfig struct {
-	ProtocolID protocol.ID
-	Target     multiaddr.Multiaddr
-	Message    registry.Message
-	MutRate    registry.MutationRate
-	Parallel   int
+	Network  string
+	Target   multiaddr.Multiaddr
+	Message  registry.Message
+	MutRate  registry.MutationRate
+	Parallel int
 }
 
 func NewGun(conf GunConfig) *Gun {
@@ -130,17 +129,12 @@ func (g *Gun) shoot(ctx context.Context, _ *Ammo, h host.Host) {
 
 	fmt.Println("Shooting from host:   ", h.ID().String())
 
-	stream, err := h.NewStream(ctx, g.target, g.conf.ProtocolID)
+	totalBytes, latency, err := g.conf.Message.Send(ctx, h, g.target, g.conf.Network, g.aggr)
 	if err != nil {
 		if errors.Is(errors.Unwrap(err), network.ErrResourceLimitExceeded) {
 			return
 		}
 		panic(err)
-	}
-
-	totalBytes, latency, err := Send(ctx, stream, g.conf.Message.Handler())
-	if err != nil {
-		return
 	}
 
 	g.aggr.Report(Report{
@@ -194,12 +188,10 @@ func main() {
 		panic(fmt.Errorf("failed to load message: %w", err))
 	}
 
-	protocolID := message.ProtocolString(networkID)
-
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	err = message.Preload(ctx, networkID, id.ID)
+	err = message.Preload(ctx, networkID, *id)
 	if err != nil {
 		panic(fmt.Errorf("failed to preload message: %w", err))
 	}
@@ -217,10 +209,10 @@ func main() {
 		}
 
 		return GunConfig{
-			ProtocolID: protocol.ID(protocolID),
-			Target:     addr,
-			Message:    message,
-			MutRate:    mutRate,
+			Network: networkID,
+			Target:  addr,
+			Message: message,
+			MutRate: mutRate,
 		}
 	})
 
@@ -234,15 +226,4 @@ func main() {
 		panic(err)
 	}
 	zap.ReplaceGlobals(logger)
-}
-
-func Send(ctx context.Context, stream network.Stream, handler registry.MessageHandler) (int64, float64, error) {
-	totalBytes, latency, err := handler(ctx, stream)
-	if err != nil {
-		if strings.Contains(err.Error(), "stream reset") || strings.Contains(err.Error(), "stream closed") {
-			stream = nil
-		}
-		fmt.Println("Failed to handle message: ", err.Error())
-	}
-	return totalBytes, latency, err
 }

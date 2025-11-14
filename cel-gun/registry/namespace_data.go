@@ -3,17 +3,15 @@ package registry
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
+
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/yandex/pandora/core"
 
 	"io"
 	"time"
 
 	"github.com/celestiaorg/celestia-node/share/shwap"
 	"github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex"
-	shrexpb "github.com/celestiaorg/celestia-node/share/shwap/p2p/shrex/pb"
-	"github.com/celestiaorg/go-libp2p-messenger/serde"
-	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
@@ -77,63 +75,27 @@ func (n *NamespaceDataMessage) GetResponseSize() uint64 {
 	return uint64(len(n.responseData.Flatten())) * 512
 }
 
-func (n *NamespaceDataMessage) Handler() MessageHandler {
-	return func(ctx context.Context, stream network.Stream) (int64, float64, error) {
-		err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err != nil {
-			fmt.Println("set read deadline err: ", err.Error())
-		}
-
-		_, err = n.request.WriteTo(stream)
-		if err != nil {
-			return 0, 0, err
-		}
-		_ = stream.CloseWrite()
-
-		err = stream.SetReadDeadline(time.Now().Add(time.Minute))
-		if err != nil {
-			fmt.Println("set read deadline err: ", err.Error())
-		}
-
-		// wrap the entire read (of status + resp) with time
-		// to record real latency of the request
-		startTime := time.Now()
-
-		var statusResp shrexpb.Response
-		statusBytes, err := serde.Read(stream, &statusResp)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return 0, 0, fmt.Errorf("reading a response: %w", shrex.ErrRateLimited)
-			}
-			return 0, 0, fmt.Errorf("unexpected error during reading the status from stream: %w", err)
-		}
-
-		switch statusResp.Status {
-		case shrexpb.Status_OK:
-		case shrexpb.Status_NOT_FOUND:
-			return 0, 0, shrex.ErrNotFound
-		case shrexpb.Status_INTERNAL:
-			return 0, 0, shrex.ErrInternalServer
-		default:
-			return 0, 0, shrex.ErrInvalidResponse
-		}
-
-		n.responseData = new(shwap.NamespaceData)
-
-		respBytes, err := n.ReadFrom(stream)
-		if err != nil {
-			return 0, 0, fmt.Errorf("%w: %w", shrex.ErrInvalidResponse, err)
-		}
-
-		endTime := time.Since(startTime)
-		totalBytes := int64(statusBytes) + respBytes
-
-		_ = stream.CloseRead()
-
-		return totalBytes, float64(endTime.Milliseconds()), nil
-	}
+func (n *NamespaceDataMessage) Preload(context.Context, string, peer.AddrInfo) error {
+	return nil
 }
 
-func (n *NamespaceDataMessage) Preload(context.Context, string, peer.ID) error {
-	return nil
+func (n *NamespaceDataMessage) Send(ctx context.Context, host host.Host, target peer.ID, networkID string, _ core.Aggregator) (int64, float64, error) {
+	params := shrex.DefaultClientParameters()
+	params.WithNetworkID(networkID)
+	client, err := shrex.NewClient(params, host)
+	if err != nil {
+		return 0, 0, err
+	}
+	err = client.WithMetrics()
+	if err != nil {
+		return 0, 0, err
+	}
+	start := time.Now()
+	length, err := client.Get(ctx, n.request, n.responseData, target)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	end := time.Since(start)
+	return length, float64(end), nil
 }
